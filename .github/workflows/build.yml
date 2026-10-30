@@ -1,0 +1,259 @@
+name: Build Rust Browser APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android components
+        run: |
+          sdkmanager "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/example/rustbrowser
+          mkdir -p app/src/main/jniLibs
+          mkdir -p rust-core/src
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'RustBrowser'
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.example.rustbrowser'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.example.rustbrowser'
+                  minSdk 23
+                  targetSdk 28
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="Rust Browser"
+                  android:usesCleartextTraffic="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/example/rustbrowser/MainActivity.java <<'EOF'
+          package com.example.rustbrowser;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.KeyEvent;
+          import android.view.inputmethod.EditorInfo;
+          import android.widget.*;
+          import android.webkit.*;
+
+          public class MainActivity extends Activity {
+              WebView web;
+              EditText address;
+
+              static {
+                  System.loadLibrary("browser_core");
+              }
+
+              public native String rustVersion();
+
+              @Override
+              public void onCreate(Bundle state) {
+                  super.onCreate(state);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+
+                  LinearLayout bar = new LinearLayout(this);
+                  address = new EditText(this);
+                  address.setSingleLine(true);
+                  address.setHint("Cari atau masukkan alamat");
+
+                  Button go = new Button(this);
+                  go.setText("GO");
+
+                  bar.addView(address, new LinearLayout.LayoutParams(
+                      0, -2, 1
+                  ));
+                  bar.addView(go);
+
+                  web = new WebView(this);
+                  web.setWebViewClient(new WebViewClient());
+                  web.getSettings().setJavaScriptEnabled(true);
+                  web.getSettings().setDomStorageEnabled(true);
+
+                  root.addView(bar);
+                  root.addView(web, new LinearLayout.LayoutParams(
+                      -1, 0, 1
+                  ));
+
+                  setContentView(root);
+
+                  go.setOnClickListener(v -> openPage());
+
+                  address.setOnEditorActionListener((v, action, event) -> {
+                      if (action == EditorInfo.IME_ACTION_GO ||
+                          action == EditorInfo.IME_ACTION_DONE) {
+                          openPage();
+                          return true;
+                      }
+                      return false;
+                  });
+
+                  web.loadUrl("https://www.google.com");
+              }
+
+              void openPage() {
+                  String input = address.getText().toString().trim();
+                  if (input.isEmpty()) return;
+
+                  String url;
+                  if (input.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*")) {
+                      url = input;
+                  } else if (input.contains(".") && !input.contains(" ")) {
+                      url = "https://" + input;
+                  } else {
+                      url = "https://www.google.com/search?q=" +
+                          android.net.Uri.encode(input);
+                  }
+                  web.loadUrl(url);
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web.canGoBack()) {
+                      web.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+          cat > rust-core/Cargo.toml <<'EOF'
+          [package]
+          name = "browser_core"
+          version = "0.1.0"
+          edition = "2021"
+
+          [lib]
+          crate-type = ["cdylib"]
+
+          [dependencies]
+          jni = "0.21"
+          EOF
+
+          cat > rust-core/src/lib.rs <<'EOF'
+          use jni::JNIEnv;
+          use jni::objects::JClass;
+          use jni::sys::jstring;
+
+          #[no_mangle]
+          pub extern "system" fn Java_com_example_rustbrowser_MainActivity_rustVersion(
+              mut env: JNIEnv,
+              _class: JClass,
+          ) -> jstring {
+              env.new_string("Rust Browser - Powered by Rust")
+                  .expect("Cannot create Java string")
+                  .into_raw()
+          }
+          EOF
+
+      - name: Build Rust library
+        run: |
+          cd rust-core
+          cargo ndk -t arm64-v8a \
+            -o ../app/src/main/jniLibs \
+            build --release
+
+      - name: Build Android APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Prepare downloads
+        run: |
+          mkdir -p output
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            output/RustBrowser.apk
+          zip -r output/RustBrowser-source.zip \
+            settings.gradle build.gradle app rust-core
+
+      - name: Upload APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: RustBrowser-Android
+          path: output/*
+          retention-days: 30
