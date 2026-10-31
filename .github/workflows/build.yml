@@ -94,8 +94,8 @@ jobs:
                   applicationId 'com.example.rustbrowser'
                   minSdk 23
                   targetSdk 28
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '1.1'
               }
           }
           EOF
@@ -104,7 +104,6 @@ jobs:
         run: |
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
               <uses-permission android:name="android.permission.INTERNET"/>
 
               <application
@@ -132,15 +131,29 @@ jobs:
           package com.example.rustbrowser;
 
           import android.app.Activity;
+          import android.app.AlertDialog;
           import android.os.Bundle;
+          import android.content.SharedPreferences;
           import android.view.inputmethod.EditorInfo;
           import android.widget.*;
           import android.webkit.*;
+          import android.graphics.Color;
+          import android.view.ViewGroup;
+          import android.view.View;
+          import android.text.TextUtils;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          import java.util.ArrayList;
 
           public class MainActivity extends Activity {
 
               private WebView web;
               private EditText address;
+              private Button backButton;
+              private Button forwardButton;
+              private SharedPreferences storage;
 
               static {
                   System.loadLibrary("browser_core");
@@ -152,22 +165,56 @@ jobs:
               protected void onCreate(Bundle state) {
                   super.onCreate(state);
 
+                  storage = getSharedPreferences("browser_data", MODE_PRIVATE);
+
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(Color.WHITE);
 
-                  LinearLayout bar = new LinearLayout(this);
+                  LinearLayout addressBar = new LinearLayout(this);
+                  addressBar.setPadding(6, 6, 6, 2);
 
                   address = new EditText(this);
                   address.setSingleLine(true);
                   address.setHint("Search or enter URL");
+                  address.setTextSize(14);
                   address.setImeOptions(EditorInfo.IME_ACTION_GO);
 
                   Button go = new Button(this);
                   go.setText("GO");
 
-                  bar.addView(address,
+                  addressBar.addView(address,
                       new LinearLayout.LayoutParams(0, -2, 1));
-                  bar.addView(go);
+                  addressBar.addView(go);
+
+                  LinearLayout navigation = new LinearLayout(this);
+                  navigation.setPadding(4, 0, 4, 4);
+
+                  backButton = new Button(this);
+                  backButton.setText("←");
+
+                  forwardButton = new Button(this);
+                  forwardButton.setText("→");
+
+                  Button historyButton = new Button(this);
+                  historyButton.setText("History");
+
+                  Button saveButton = new Button(this);
+                  saveButton.setText("☆ Save");
+
+                  Button bookmarksButton = new Button(this);
+                  bookmarksButton.setText("Bookmarks");
+
+                  navigation.addView(backButton,
+                      new LinearLayout.LayoutParams(0, -2, 1));
+                  navigation.addView(forwardButton,
+                      new LinearLayout.LayoutParams(0, -2, 1));
+                  navigation.addView(historyButton,
+                      new LinearLayout.LayoutParams(0, -2, 1));
+                  navigation.addView(saveButton,
+                      new LinearLayout.LayoutParams(0, -2, 1));
+                  navigation.addView(bookmarksButton,
+                      new LinearLayout.LayoutParams(0, -2, 1));
 
                   web = new WebView(this);
 
@@ -175,9 +222,19 @@ jobs:
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
 
-                  web.setWebViewClient(new WebViewClient());
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
+                          super.onPageFinished(view, url);
 
-                  root.addView(bar);
+                          address.setText(url);
+                          saveHistory(view.getTitle(), url);
+                          updateNavigationButtons();
+                      }
+                  });
+
+                  root.addView(addressBar);
+                  root.addView(navigation);
                   root.addView(web,
                       new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -185,35 +242,47 @@ jobs:
 
                   go.setOnClickListener(v -> openPage());
 
-                  address.setOnEditorActionListener(
-                      (v, action, event) -> {
-                          if (action == EditorInfo.IME_ACTION_GO ||
-                              action == EditorInfo.IME_ACTION_DONE) {
-                              openPage();
-                              return true;
-                          }
-                          return false;
+                  address.setOnEditorActionListener((v, action, event) -> {
+                      if (action == EditorInfo.IME_ACTION_GO ||
+                          action == EditorInfo.IME_ACTION_DONE) {
+                          openPage();
+                          return true;
                       }
-                  );
+                      return false;
+                  });
+
+                  backButton.setOnClickListener(v -> {
+                      if (web.canGoBack()) {
+                          web.goBack();
+                      }
+                  });
+
+                  forwardButton.setOnClickListener(v -> {
+                      if (web.canGoForward()) {
+                          web.goForward();
+                      }
+                  });
+
+                  historyButton.setOnClickListener(v -> showHistory());
+
+                  saveButton.setOnClickListener(v -> saveBookmark());
+
+                  bookmarksButton.setOnClickListener(v -> showBookmarks());
 
                   web.loadUrl("https://www.google.com");
+                  updateNavigationButtons();
               }
 
               private void openPage() {
-                  String input = address.getText()
-                      .toString().trim();
+                  String input = address.getText().toString().trim();
 
                   if (input.isEmpty()) return;
 
                   String url;
 
-                  if (input.matches(
-                      "^[a-zA-Z][a-zA-Z0-9+.-]*://.*")) {
+                  if (input.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*")) {
                       url = input;
-                  } else if (
-                      input.contains(".") &&
-                      !input.contains(" ")
-                  ) {
+                  } else if (input.contains(".") && !input.contains(" ")) {
                       url = "https://" + input;
                   } else {
                       url = "https://www.google.com/search?q=" +
@@ -221,6 +290,151 @@ jobs:
                   }
 
                   web.loadUrl(url);
+              }
+
+              private void updateNavigationButtons() {
+                  if (web == null) return;
+
+                  backButton.setEnabled(web.canGoBack());
+                  forwardButton.setEnabled(web.canGoForward());
+
+                  backButton.setAlpha(web.canGoBack() ? 1f : 0.4f);
+                  forwardButton.setAlpha(web.canGoForward() ? 1f : 0.4f);
+              }
+
+              private JSONArray readList(String key) {
+                  try {
+                      return new JSONArray(storage.getString(key, "[]"));
+                  } catch (Exception e) {
+                      return new JSONArray();
+                  }
+              }
+
+              private void saveList(String key, JSONArray list) {
+                  storage.edit().putString(key, list.toString()).apply();
+              }
+
+              private void saveHistory(String title, String url) {
+                  if (url == null || url.isEmpty()) return;
+
+                  JSONArray oldList = readList("history");
+                  JSONArray newList = new JSONArray();
+
+                  JSONObject item = new JSONObject();
+
+                  try {
+                      item.put("title",
+                          title == null || title.isEmpty() ? url : title);
+                      item.put("url", url);
+
+                      newList.put(item);
+
+                      for (int i = 0; i < oldList.length(); i++) {
+                          JSONObject old = oldList.optJSONObject(i);
+
+                          if (old != null &&
+                              !url.equals(old.optString("url"))) {
+                              newList.put(old);
+                          }
+                      }
+
+                      while (newList.length() > 200) {
+                          JSONArray limited = new JSONArray();
+
+                          for (int i = 0; i < 199; i++) {
+                              limited.put(newList.get(i));
+                          }
+
+                          newList = limited;
+                      }
+
+                      saveList("history", newList);
+
+                  } catch (Exception e) {
+                      e.printStackTrace();
+                  }
+              }
+
+              private void saveBookmark() {
+                  String url = web.getUrl();
+
+                  if (url == null || url.isEmpty()) {
+                      Toast.makeText(this, "Tidak ada halaman untuk disimpan",
+                          Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+
+                  JSONArray list = readList("bookmarks");
+
+                  for (int i = 0; i < list.length(); i++) {
+                      JSONObject item = list.optJSONObject(i);
+
+                      if (item != null && url.equals(item.optString("url"))) {
+                          Toast.makeText(this, "Sudah ada di Bookmark",
+                              Toast.LENGTH_SHORT).show();
+                          return;
+                      }
+                  }
+
+                  try {
+                      JSONObject item = new JSONObject();
+                      item.put("title", web.getTitle() == null ? url : web.getTitle());
+                      item.put("url", url);
+
+                      list.put(item);
+                      saveList("bookmarks", list);
+
+                      Toast.makeText(this, "Berhasil disimpan ke Bookmark",
+                          Toast.LENGTH_SHORT).show();
+
+                  } catch (Exception e) {
+                      e.printStackTrace();
+                  }
+              }
+
+              private void showHistory() {
+                  showSavedList("history", "Riwayat History");
+              }
+
+              private void showBookmarks() {
+                  showSavedList("bookmarks", "Bookmark");
+              }
+
+              private void showSavedList(String key, String title) {
+                  JSONArray list = readList(key);
+
+                  if (list.length() == 0) {
+                      Toast.makeText(this, "Belum ada data",
+                          Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+
+                  ArrayList<String> labels = new ArrayList<>();
+                  ArrayList<String> urls = new ArrayList<>();
+
+                  for (int i = 0; i < list.length(); i++) {
+                      JSONObject item = list.optJSONObject(i);
+
+                      if (item != null) {
+                          String pageTitle = item.optString("title");
+                          String url = item.optString("url");
+
+                          labels.add(pageTitle + "\n" + url);
+                          urls.add(url);
+                      }
+                  }
+
+                  String[] items = labels.toArray(new String[0]);
+
+                  new AlertDialog.Builder(this)
+                      .setTitle(title)
+                      .setItems(items, (dialog, which) -> {
+                          if (which >= 0 && which < urls.size()) {
+                              web.loadUrl(urls.get(which));
+                          }
+                      })
+                      .setNegativeButton("Tutup", null)
+                      .show();
               }
 
               @Override
@@ -237,6 +451,7 @@ jobs:
                   if (web != null) {
                       web.destroy();
                   }
+
                   super.onDestroy();
               }
           }
@@ -286,7 +501,6 @@ jobs:
       - name: Prepare APK and source files
         run: |
           mkdir -p output
-
           cp app/build/outputs/apk/debug/app-debug.apk \
             output/RustBrowser.apk
 
