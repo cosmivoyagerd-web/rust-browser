@@ -1,3 +1,4 @@
+
 name: Build Rust Browser APK
 
 on:
@@ -25,7 +26,7 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Accept SDK licenses and install components
+      - name: Install Android components
         run: |
           yes | sdkmanager --licenses
           sdkmanager --install \
@@ -94,8 +95,8 @@ jobs:
                   applicationId 'com.example.rustbrowser'
                   minSdk 23
                   targetSdk 28
-                  versionCode 2
-                  versionName '1.1'
+                  versionCode 3
+                  versionName '1.2'
               }
           }
           EOF
@@ -134,17 +135,17 @@ jobs:
           import android.app.AlertDialog;
           import android.os.Bundle;
           import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.view.Gravity;
           import android.view.inputmethod.EditorInfo;
+          import android.view.View;
+          import android.view.ViewGroup;
           import android.widget.*;
           import android.webkit.*;
-          import android.graphics.Color;
-          import android.view.ViewGroup;
-          import android.view.View;
-          import android.text.TextUtils;
-
           import org.json.JSONArray;
           import org.json.JSONObject;
-
           import java.util.ArrayList;
 
           public class MainActivity extends Activity {
@@ -153,7 +154,15 @@ jobs:
               private EditText address;
               private Button backButton;
               private Button forwardButton;
+              private TextView loadingText;
+              private ProgressBar progress;
               private SharedPreferences storage;
+
+              private final int background = Color.rgb(15, 20, 30);
+              private final int surface = Color.rgb(27, 35, 49);
+              private final int accent = Color.rgb(65, 130, 255);
+              private final int primaryText = Color.rgb(240, 244, 250);
+              private final int secondaryText = Color.rgb(155, 170, 190);
 
               static {
                   System.loadLibrary("browser_core");
@@ -167,76 +176,182 @@ jobs:
 
                   storage = getSharedPreferences("browser_data", MODE_PRIVATE);
 
+                  getWindow().setStatusBarColor(background);
+                  getWindow().setNavigationBarColor(background);
+                  getWindow().getDecorView().setSystemUiVisibility(0);
+
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
-                  root.setBackgroundColor(Color.WHITE);
+                  root.setBackgroundColor(background);
 
+                  // TOP BAR
+                  LinearLayout top = new LinearLayout(this);
+                  top.setOrientation(LinearLayout.VERTICAL);
+                  top.setPadding(dp(14), dp(10), dp(14), dp(8));
+                  top.setBackgroundColor(background);
+
+                  LinearLayout brandRow = new LinearLayout(this);
+                  brandRow.setGravity(Gravity.CENTER_VERTICAL);
+
+                  TextView logo = new TextView(this);
+                  logo.setText("◈");
+                  logo.setTextColor(accent);
+                  logo.setTextSize(25);
+                  logo.setTypeface(null, Typeface.BOLD);
+
+                  TextView brand = new TextView(this);
+                  brand.setText("  RUST BROWSER");
+                  brand.setTextColor(primaryText);
+                  brand.setTextSize(14);
+                  brand.setTypeface(null, Typeface.BOLD);
+                  brand.setLetterSpacing(0.08f);
+
+                  TextView version = new TextView(this);
+                  version.setText("1.2");
+                  version.setTextColor(secondaryText);
+                  version.setTextSize(11);
+                  version.setPadding(dp(8), 0, 0, 0);
+
+                  brandRow.addView(logo);
+                  brandRow.addView(brand);
+                  brandRow.addView(version);
+
+                  // ADDRESS BAR
                   LinearLayout addressBar = new LinearLayout(this);
-                  addressBar.setPadding(6, 6, 6, 2);
+                  addressBar.setGravity(Gravity.CENTER_VERTICAL);
+                  addressBar.setPadding(dp(12), 0, dp(5), 0);
+                  addressBar.setBackground(rounded(surface, 18));
+
+                  TextView searchIcon = new TextView(this);
+                  searchIcon.setText("⌕");
+                  searchIcon.setTextSize(25);
+                  searchIcon.setTextColor(secondaryText);
+                  searchIcon.setGravity(Gravity.CENTER);
 
                   address = new EditText(this);
                   address.setSingleLine(true);
-                  address.setHint("Search or enter URL");
                   address.setTextSize(14);
+                  address.setTextColor(primaryText);
+                  address.setHintTextColor(secondaryText);
+                  address.setHint("Search or enter address");
+                  address.setBackgroundColor(Color.TRANSPARENT);
+                  address.setPadding(dp(8), dp(12), dp(4), dp(12));
                   address.setImeOptions(EditorInfo.IME_ACTION_GO);
 
                   Button go = new Button(this);
                   go.setText("GO");
+                  go.setTextColor(Color.WHITE);
+                  go.setTextSize(11);
+                  go.setAllCaps(false);
+                  go.setBackground(rounded(accent, 14));
+
+                  LinearLayout.LayoutParams goParams =
+                      new LinearLayout.LayoutParams(dp(48), dp(42));
+                  goParams.setMargins(dp(4), dp(4), dp(4), dp(4));
+
+                  addressBar.addView(searchIcon,
+                      new LinearLayout.LayoutParams(dp(25), -1));
 
                   addressBar.addView(address,
                       new LinearLayout.LayoutParams(0, -2, 1));
-                  addressBar.addView(go);
 
-                  LinearLayout navigation = new LinearLayout(this);
-                  navigation.setPadding(4, 0, 4, 4);
+                  addressBar.addView(go, goParams);
 
-                  backButton = new Button(this);
-                  backButton.setText("←");
+                  // LOADING BAR
+                  progress = new ProgressBar(this, null,
+                      android.R.attr.progressBarStyleHorizontal);
+                  progress.setMax(100);
+                  progress.setProgressTintList(
+                      android.content.res.ColorStateList.valueOf(accent));
+                  progress.setVisibility(View.GONE);
 
-                  forwardButton = new Button(this);
-                  forwardButton.setText("→");
+                  loadingText = new TextView(this);
+                  loadingText.setTextColor(secondaryText);
+                  loadingText.setTextSize(10);
+                  loadingText.setPadding(dp(3), dp(4), 0, 0);
+                  loadingText.setText("Ready");
 
-                  Button historyButton = new Button(this);
-                  historyButton.setText("History");
+                  top.addView(brandRow);
 
-                  Button saveButton = new Button(this);
-                  saveButton.setText("☆ Save");
+                  LinearLayout.LayoutParams addressParams =
+                      new LinearLayout.LayoutParams(-1, dp(50));
+                  addressParams.setMargins(0, dp(12), 0, dp(4));
 
-                  Button bookmarksButton = new Button(this);
-                  bookmarksButton.setText("Bookmarks");
+                  top.addView(addressBar, addressParams);
+                  top.addView(progress,
+                      new LinearLayout.LayoutParams(-1, dp(3)));
+                  top.addView(loadingText);
 
-                  navigation.addView(backButton,
-                      new LinearLayout.LayoutParams(0, -2, 1));
-                  navigation.addView(forwardButton,
-                      new LinearLayout.LayoutParams(0, -2, 1));
-                  navigation.addView(historyButton,
-                      new LinearLayout.LayoutParams(0, -2, 1));
-                  navigation.addView(saveButton,
-                      new LinearLayout.LayoutParams(0, -2, 1));
-                  navigation.addView(bookmarksButton,
-                      new LinearLayout.LayoutParams(0, -2, 1));
-
+                  // WEBVIEW
                   web = new WebView(this);
 
                   WebSettings settings = web.getSettings();
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
 
+                  web.setBackgroundColor(Color.WHITE);
+
                   web.setWebViewClient(new WebViewClient() {
                       @Override
-                      public void onPageFinished(WebView view, String url) {
-                          super.onPageFinished(view, url);
+                      public void onPageStarted(WebView view, String url,
+                                                android.graphics.Bitmap favicon) {
+                          progress.setVisibility(View.VISIBLE);
+                          progress.setProgress(0);
+                          loadingText.setText("Loading page...");
+                          address.setText(url);
+                          updateNavigationButtons();
+                      }
 
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
                           address.setText(url);
                           saveHistory(view.getTitle(), url);
+                          loadingText.setText("Page loaded");
+                          progress.setVisibility(View.GONE);
                           updateNavigationButtons();
                       }
                   });
 
-                  root.addView(addressBar);
-                  root.addView(navigation);
+                  web.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onProgressChanged(WebView view, int value) {
+                          progress.setProgress(value);
+
+                          if (value >= 100) {
+                              progress.setVisibility(View.GONE);
+                          } else {
+                              progress.setVisibility(View.VISIBLE);
+                          }
+                      }
+                  });
+
+                  // BOTTOM NAVIGATION
+                  LinearLayout bottom = new LinearLayout(this);
+                  bottom.setGravity(Gravity.CENTER);
+                  bottom.setPadding(dp(5), dp(5), dp(5), dp(7));
+                  bottom.setBackgroundColor(surface);
+
+                  backButton = navButton("‹", "Back");
+                  forwardButton = navButton("›", "Forward");
+
+                  Button homeButton = navButton("⌂", "Home");
+                  Button menuButton = navButton("☰", "Menu");
+
+                  bottom.addView(backButton,
+                      new LinearLayout.LayoutParams(0, dp(58), 1));
+                  bottom.addView(forwardButton,
+                      new LinearLayout.LayoutParams(0, dp(58), 1));
+                  bottom.addView(homeButton,
+                      new LinearLayout.LayoutParams(0, dp(58), 1));
+                  bottom.addView(menuButton,
+                      new LinearLayout.LayoutParams(0, dp(58), 1));
+
+                  root.addView(top);
+
                   root.addView(web,
                       new LinearLayout.LayoutParams(-1, 0, 1));
+
+                  root.addView(bottom);
 
                   setContentView(root);
 
@@ -252,25 +367,46 @@ jobs:
                   });
 
                   backButton.setOnClickListener(v -> {
-                      if (web.canGoBack()) {
-                          web.goBack();
-                      }
+                      if (web.canGoBack()) web.goBack();
                   });
 
                   forwardButton.setOnClickListener(v -> {
-                      if (web.canGoForward()) {
-                          web.goForward();
-                      }
+                      if (web.canGoForward()) web.goForward();
                   });
 
-                  historyButton.setOnClickListener(v -> showHistory());
-
-                  saveButton.setOnClickListener(v -> saveBookmark());
-
-                  bookmarksButton.setOnClickListener(v -> showBookmarks());
+                  homeButton.setOnClickListener(v -> openHome());
+                  menuButton.setOnClickListener(v -> showMenu());
 
                   web.loadUrl("https://www.google.com");
                   updateNavigationButtons();
+              }
+
+              private int dp(float value) {
+                  return (int) (value * getResources()
+                      .getDisplayMetrics().density + 0.5f);
+              }
+
+              private GradientDrawable rounded(int color, int radius) {
+                  GradientDrawable shape = new GradientDrawable();
+                  shape.setColor(color);
+                  shape.setCornerRadius(dp(radius));
+                  return shape;
+              }
+
+              private Button navButton(String icon, String label) {
+                  Button button = new Button(this);
+                  button.setText(icon + "\n" + label);
+                  button.setTextSize(12);
+                  button.setTextColor(primaryText);
+                  button.setAllCaps(false);
+                  button.setGravity(Gravity.CENTER);
+                  button.setBackgroundColor(Color.TRANSPARENT);
+                  button.setPadding(0, 0, 0, 0);
+                  return button;
+              }
+
+              private void openHome() {
+                  web.loadUrl("https://www.google.com");
               }
 
               private void openPage() {
@@ -293,13 +429,13 @@ jobs:
               }
 
               private void updateNavigationButtons() {
-                  if (web == null) return;
+                  if (web == null || backButton == null) return;
 
                   backButton.setEnabled(web.canGoBack());
                   forwardButton.setEnabled(web.canGoForward());
 
-                  backButton.setAlpha(web.canGoBack() ? 1f : 0.4f);
-                  forwardButton.setAlpha(web.canGoForward() ? 1f : 0.4f);
+                  backButton.setAlpha(web.canGoBack() ? 1f : 0.35f);
+                  forwardButton.setAlpha(web.canGoForward() ? 1f : 0.35f);
               }
 
               private JSONArray readList(String key) {
@@ -320,13 +456,11 @@ jobs:
                   JSONArray oldList = readList("history");
                   JSONArray newList = new JSONArray();
 
-                  JSONObject item = new JSONObject();
-
                   try {
+                      JSONObject item = new JSONObject();
                       item.put("title",
                           title == null || title.isEmpty() ? url : title);
                       item.put("url", url);
-
                       newList.put(item);
 
                       for (int i = 0; i < oldList.length(); i++) {
@@ -338,17 +472,14 @@ jobs:
                           }
                       }
 
-                      while (newList.length() > 200) {
-                          JSONArray limited = new JSONArray();
+                      JSONArray limited = new JSONArray();
 
-                          for (int i = 0; i < 199; i++) {
-                              limited.put(newList.get(i));
-                          }
-
-                          newList = limited;
+                      for (int i = 0;
+                           i < Math.min(200, newList.length()); i++) {
+                          limited.put(newList.get(i));
                       }
 
-                      saveList("history", newList);
+                      saveList("history", limited);
 
                   } catch (Exception e) {
                       e.printStackTrace();
@@ -358,19 +489,17 @@ jobs:
               private void saveBookmark() {
                   String url = web.getUrl();
 
-                  if (url == null || url.isEmpty()) {
-                      Toast.makeText(this, "Tidak ada halaman untuk disimpan",
-                          Toast.LENGTH_SHORT).show();
-                      return;
-                  }
+                  if (url == null || url.isEmpty()) return;
 
                   JSONArray list = readList("bookmarks");
 
                   for (int i = 0; i < list.length(); i++) {
                       JSONObject item = list.optJSONObject(i);
 
-                      if (item != null && url.equals(item.optString("url"))) {
-                          Toast.makeText(this, "Sudah ada di Bookmark",
+                      if (item != null &&
+                          url.equals(item.optString("url"))) {
+                          Toast.makeText(this,
+                              "Already bookmarked",
                               Toast.LENGTH_SHORT).show();
                           return;
                       }
@@ -378,13 +507,15 @@ jobs:
 
                   try {
                       JSONObject item = new JSONObject();
-                      item.put("title", web.getTitle() == null ? url : web.getTitle());
+                      item.put("title",
+                          web.getTitle() == null ? url : web.getTitle());
                       item.put("url", url);
 
                       list.put(item);
                       saveList("bookmarks", list);
 
-                      Toast.makeText(this, "Berhasil disimpan ke Bookmark",
+                      Toast.makeText(this,
+                          "Bookmark saved",
                           Toast.LENGTH_SHORT).show();
 
                   } catch (Exception e) {
@@ -392,128 +523,28 @@ jobs:
                   }
               }
 
-              private void showHistory() {
-                  showSavedList("history", "Riwayat History");
-              }
-
-              private void showBookmarks() {
-                  showSavedList("bookmarks", "Bookmark");
-              }
-
-              private void showSavedList(String key, String title) {
-                  JSONArray list = readList(key);
-
-                  if (list.length() == 0) {
-                      Toast.makeText(this, "Belum ada data",
-                          Toast.LENGTH_SHORT).show();
-                      return;
-                  }
-
-                  ArrayList<String> labels = new ArrayList<>();
-                  ArrayList<String> urls = new ArrayList<>();
-
-                  for (int i = 0; i < list.length(); i++) {
-                      JSONObject item = list.optJSONObject(i);
-
-                      if (item != null) {
-                          String pageTitle = item.optString("title");
-                          String url = item.optString("url");
-
-                          labels.add(pageTitle + "\n" + url);
-                          urls.add(url);
-                      }
-                  }
-
-                  String[] items = labels.toArray(new String[0]);
+              private void showMenu() {
+                  String[] options = {
+                      "☆  Save bookmark",
+                      "★  Bookmarks",
+                      "◷  History",
+                      "⌂  Home",
+                      "↻  Reload",
+                      "ⓘ  About Rust Browser"
+                  };
 
                   new AlertDialog.Builder(this)
-                      .setTitle(title)
-                      .setItems(items, (dialog, which) -> {
-                          if (which >= 0 && which < urls.size()) {
-                              web.loadUrl(urls.get(which));
-                          }
-                      })
-                      .setNegativeButton("Tutup", null)
-                      .show();
-              }
-
-              @Override
-              public void onBackPressed() {
-                  if (web != null && web.canGoBack()) {
-                      web.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-
-              @Override
-              protected void onDestroy() {
-                  if (web != null) {
-                      web.destroy();
-                  }
-
-                  super.onDestroy();
-              }
-          }
-          EOF
-
-      - name: Create Rust library
-        run: |
-          cat > rust-core/Cargo.toml <<'EOF'
-          [package]
-          name = "browser_core"
-          version = "0.1.0"
-          edition = "2021"
-
-          [lib]
-          crate-type = ["cdylib"]
-
-          [dependencies]
-          jni = "0.21"
-          EOF
-
-          cat > rust-core/src/lib.rs <<'EOF'
-          use jni::JNIEnv;
-          use jni::objects::JClass;
-          use jni::sys::jstring;
-
-          #[no_mangle]
-          pub extern "system" fn Java_com_example_rustbrowser_MainActivity_rustVersion(
-              mut env: JNIEnv,
-              _class: JClass,
-          ) -> jstring {
-              env.new_string("Rust Browser - Powered by Rust")
-                  .expect("Failed to create string")
-                  .into_raw()
-          }
-          EOF
-
-      - name: Compile Rust for Android ARM64
-        run: |
-          cd rust-core
-          cargo ndk -t arm64-v8a \
-            -o ../app/src/main/jniLibs \
-            build --release
-
-      - name: Build Android APK
-        run: gradle --no-daemon assembleDebug
-
-      - name: Prepare APK and source files
-        run: |
-          mkdir -p output
-          cp app/build/outputs/apk/debug/app-debug.apk \
-            output/RustBrowser.apk
-
-          zip -r output/RustBrowser-source.zip \
-            settings.gradle \
-            build.gradle \
-            app \
-            rust-core \
-            .github
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: RustBrowser-APK
-          path: output/
-          retention-days: 30
+                      .setTitle("Rust Browser Menu")
+                      .setItems(options, (dialog, which) -> {
+                          switch (which) {
+                              case 0:
+                                  saveBookmark();
+                                  break;
+                              case 1:
+                                  showBookmarks();
+                                  break;
+                              case 2:
+                                  showHistory();
+                                  break;
+                              case 3:
+             
