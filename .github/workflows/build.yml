@@ -546,4 +546,88 @@ jobs:
                                   showHistory();
                                   break;
                               case 3:
-      
+                                  openHome();
+                                  break;
+                              case 4:
+                                  web.reload();
+                                  break;
+                              case 5:
+                                  showAbout();
+                                  break;
+                          }
+                      })
+                      .show();
+              }
+
+              private void showBookmarks() {
+                  JSONArray list = readList("bookmarks");
+                  if (list.length() == 0) {
+                      Toast.makeText(this, "No bookmarks", Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+
+                  String[] titles = new String[list.length()];
+                  String[] urls = new String[list.length()];
+
+                  try {
+                      for (int i = 0; i < list.length(); i++) {
+                          JSONObject item = list.getJSONObject(i);
+                          titles[i] = item.getString("title");
+                          urls[i] = item.getString("url");
+                      }
+                  } catch (Exception e) {
+                      return;
+                  }
+
+                  new AlertDialog.Builder(this)
+                      .setTitle("Bookmarks")
+                      .setItems(titles, (dialog, which) -> web.loadUrl(urls[which]))
+                      .show();
+              }
+
+              private void showHistory() {
+                  JSONArray list = readList("history");
+                  if (list.length() == 0) {
+                      Toast.makeText(this, "No history", Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+
+                  String[] titles = new String[list.length()];
+                  String[] urls = new String[list.length()];
+
+                  try {
+                      for (int i = 0; i < list.length(); i++) {
+                          JSONObject item = list.getJSONObject(i);
+                          titles[i] = item.getString("title");
+                          urls[i] = item.getString("url");
+                      }
+                  } catch (Exception e) {
+                      return;
+                  }
+
+                  new AlertDialog.Builder(this)
+                      .setTitle("History")
+                      .setItems(titles, (dialog, which) -> web.loadUrl(urls[which]))
+                      .show();
+              }
+
+              private void showAbout() {
+                  new AlertDialog.Builder(this)
+                      .setTitle("About Rust Browser")
+                      .setMessage("Rust Browser v1.2\nPowered by Android WebView & Rust Core\n\nVersion: " + rustVersion())
+                      .setPositiveButton("OK", null)
+                      .show();
+              }
+          }
+          EOF
+
+      # INI BAGIAN PALING BAWAH YANG WAJIB ADA AGAR TOMBOL DOWNLOAD MUNCUL:
+      - name: Build APK with Gradle
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-browser-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
